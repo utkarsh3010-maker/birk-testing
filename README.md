@@ -1,10 +1,21 @@
-# Logic Extraction: Dependency Elimination
+# State Transition Pipeline
 
-This implementation replaces external synchronization libraries with a lean utility and data-layer atomicity.
+This pipeline validates bidirectional state transitions with a focus on race-condition elimination and idempotency.
 
-## Strategy
-To maintain zero-dependency overhead and O(1) binary size increase, the synchronization logic was moved from the client to the data layer using Lua scripts. This ensures atomicity without client-side locking.
+## Technical Implementation
 
-## Implementation
-- **Client-side**: A minimal utility handles the execution of server-side scripts.
-- **Data-layer**: Lua scripts perform conditional updates to prevent race conditions.
+1. **Logic Inversion**: The transition predicate verifies the current state matches the expected source before applying the terminal state.
+2. **Symmetry Validation**: Both `full_pipeline_demo.js` and `full_pipeline_demo.py` verify the A -> B and B -> A transitions.
+3. **Atomic Guard**: The Python implementation utilizes a Lua script to encapsulate the 'check-and-set' operation, preventing TOCTOU vulnerabilities.
+
+## Execution
+
+### JavaScript Symmetry Test
+
+node full_pipeline_demo.js
+
+
+### Python Atomic & Persistence Test
+
+python3 full_pipeline_demo.py
+
