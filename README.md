@@ -1,21 +1,19 @@
-# State Transition Pipeline
+# System State Pipeline - Native Implementation
 
-This pipeline validates bidirectional state transitions with a focus on race-condition elimination and idempotency.
+## Architecture
+This implementation rejects PR #52 to avoid additive dependency bloat. State synchronization and race condition mitigation (Issue #26) are handled via native Lua scripts executed at the data layer.
 
-## Technical Implementation
-
-1. **Logic Inversion**: The transition predicate verifies the current state matches the expected source before applying the terminal state.
-2. **Symmetry Validation**: Both `full_pipeline_demo.js` and `full_pipeline_demo.py` verify the A -> B and B -> A transitions.
-3. **Atomic Guard**: The Python implementation utilizes a Lua script to encapsulate the 'check-and-set' operation, preventing TOCTOU vulnerabilities.
+## Requirements
+- memanto-sdk
+- langchain (Python)
 
 ## Execution
+1. Run Python ingestion to initialize state and execute LangChain tool:
+   `python3 full_pipeline_demo.py`
+2. Run JS verification to prove cross-process persistence:
+   `node full_pipeline_demo.js`
 
-### JavaScript Symmetry Test
-
-node full_pipeline_demo.js
-
-
-### Python Atomic & Persistence Test
-
-python3 full_pipeline_demo.py
-
+## Design Constraints
+- Zero-dependency locking logic.
+- Atomic transitions via Lua.
+- Shared AGENT_ID namespace for ingestion and recall.

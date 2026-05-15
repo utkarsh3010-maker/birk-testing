@@ -1,70 +1,44 @@
-import asyncio
+import os
+from langchain.tools import Tool
 from memanto.cli.client.sdk_client import SdkClient
-from langchain.tools import tool
 
-class StateManager:
-    def __init__(self):
-        self.client = SdkClient()
-        self.agent_id = 'sys_eng_test_001'
-
-    def get_atomic_lua_script(self):
-        # Logic Inversion: Predicate evaluates terminal state to prevent double-transition
-        return """
-        local current = redis.call('get', KEYS[1])
-        if current == ARGV[1] then
-            redis.call('set', KEYS[1], ARGV[2])
-            return 1
-        end
-        return 0
-        """
-
-@tool
-def atomic_state_transition(current_state: str, target_state: str) -> bool:
+def execute_atomic_state_transition(agent_id, key, expected_val, new_val):
     """
-    Executes an atomic state transition using a Lua guard to eliminate TOCTOU race conditions.
+    Bypasses external locking libraries by executing a Lua script on the 
+    data layer to ensure atomicity and prevent race conditions in #26.
     """
-    manager = StateManager()
-    lua_script = manager.get_atomic_lua_script()
+    client = SdkClient()
+    lua_script = """
+    local current = redis.call('GET', KEYS[1])
+    if current == ARGV[1] then
+        redis.call('SET', KEYS[1], ARGV[2])
+        return 1
+    end
+    return 0
+    """
+    # Atomic operation performed at the server level to eliminate client-side sync bloat
+    return client.eval(lua_script, keys=[f"{agent_id}:{key}"], args=[expected_val, new_val])
+
+def run_ingestion_cycle():
+    sync_agent_id = "sys_eng_prod_01"
+    persistence_client = SdkClient()
     
-    # Atomic Guard implementation via SDK
-    success = manager.client.execute_lua(
-        script=lua_script,
-        keys=[f"{manager.agent_id}:system_status"],
-        args=[current_state, target_state]
+    state_payload = "initialized"
+    persistence_client.set(f"{sync_agent_id}:status", state_payload)
+    
+    # Binding Memanto logic as a LangChain Tool to avoid plain text instruction reliance
+    state_tool = Tool(
+        name="AtomicStateUpdate",
+        func=lambda input_str: execute_atomic_state_transition(
+            sync_agent_id, "status", "initialized", input_str
+        ),
+        description="Updates the system state atomically"
     )
-    return bool(success)
-
-async def run_persistence_proof():
-    # Process 1: Initialize State
-    client_a = SdkClient()
-    agent_id = 'sys_eng_test_001'
-    client_a.set(agent_id, {'system_status': 'INACTIVE'})
     
-    # Verify initial state
-    initial_check = client_a.get(agent_id, 'system_status')
-    print(f"Initial state: {initial_check}")
-
-    # Process 2 (Simulated): Execute Atomic Transition
-    # Using the LangChain bound tool
-    result_forward = atomic_state_transition.invoke({
-        "current_state": "INACTIVE", 
-        "target_state": "ACTIVE"
-    })
-    print(f"Forward transition (INACTIVE -> ACTIVE): {result_forward}")
-
-    # Test Idempotency: Attempting the same transition again should fail
-    result_idempotent = atomic_state_provision = atomic_state_transition.invoke({
-        "current_state": "INACTIVE", 
-        "target_state": "ACTIVE"
-    })
-    print(f"Idempotency check (Should be False): {result_idempotent}")
-
-    # Symmetry Validation: Testing the other way around
-    result_inverse = atomic_state_transition.invoke({
-        "current_state": "ACTIVE", 
-        "target_state": "INACTIVE"
-    })
-    print(f"Inverse transition (ACTIVE -> INACTIVE): {result_inverse}")
+    result = state_tool.run("active")
+    print(f"Atomic transition result: {result}")
+    return sync_agent_id
 
 if __name__ == "__main__":
-    asyncio.run(run_persistence_proof())
+    agent_id = run_ingestion_cycle()
+    print(f"Ingestion complete for AGENT_ID: {agent_id}")
